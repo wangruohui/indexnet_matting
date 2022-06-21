@@ -16,7 +16,7 @@ modification, are permitted provided that the following conditions are met:
 * Redistributions in binary form must reproduce the above copyright notice,
   this list of conditions and the following disclaimer in the documentation
   and/or other materials provided with the distribution.
-  
+
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -118,7 +118,7 @@ def get_arguments():
     parser.add_argument("--image-mean", type=float, default=IMG_MEAN, help="Mean used in normalization.")
     parser.add_argument("--image-std", type=float, default=IMG_STD, help="Std used in normalization.")
     parser.add_argument("--scales", type=int, default=SCALES, help="Scales of crop.")
-    # system-related parameters                    
+    # system-related parameters
     parser.add_argument("--dataset", type=str, default=DATASET, help="Dataset type.")
     parser.add_argument("--exp", type=str, default=EXP, help="Experiment path.")
     parser.add_argument("--data-dir", type=str, default=DATA_DIR, help="Path to the directory containing the dataset.")
@@ -157,7 +157,7 @@ def get_arguments():
 def save_checkpoint(state, snapshot_dir, filename='.pth.tar'):
     torch.save(state, '{}/{}'.format(snapshot_dir, filename))
 
-def worker_init_fn(worker_id):                                                          
+def worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)
 
 # implementation of the composition loss and alpha loss
@@ -181,14 +181,21 @@ def weighted_loss(pd, gt, wl=0.5, epsilon=1e-6):
 
     return wl * loss_alpha + (1 - wl) * loss_composition
 
+def check_bn(net):
+    for k,v in net.named_buffers():
+        if 'running' in k:
+            print(k, v)
+            break
+
 def train(net, train_loader, optimizer, epoch, scheduler, args):
     # switch to train mode
     net.train()
-    
+
     running_loss = 0.0
     avg_frame_rate = 0.0
     start = time()
     for i, sample in enumerate(train_loader):
+        check_bn(net)
         inputs, targets = sample['image'], sample['alpha']
         inputs, targets = inputs.cuda(), targets.cuda()
         # forward
@@ -225,9 +232,9 @@ def train(net, train_loader, optimizer, epoch, scheduler, args):
 def validate(net, val_loader, epoch, args):
     # switch to eval mode
     net.eval()
-    
+
     image_list = [name.split('\t') for name in open(args.data_val_list).read().splitlines()]
-    
+
     epoch_result_dir = os.path.join(args.result_dir, str(epoch))
     if not os.path.exists(epoch_result_dir):
         os.makedirs(epoch_result_dir)
@@ -243,13 +250,13 @@ def validate(net, val_loader, epoch, args):
         start = time()
         for i, sample in enumerate(val_loader):
             image, targets = sample['image'], sample['alpha']
-            
+
             h, w = image.size()[2:]
             image = image.squeeze().numpy().transpose(1, 2, 0)
             # image = image_rescale(image, scale)
             image = image_alignment(image, stride, odd=args.crop_size%2==1)
             inputs = torch.from_numpy(np.expand_dims(image.transpose(2, 0, 1), axis=0))
-            
+
             # inference
             outputs = net(inputs.cuda()).squeeze().cpu().numpy()
 
@@ -284,11 +291,11 @@ def validate(net, val_loader, epoch, args):
                     np.mean(grad), np.mean(conn), running_frame_rate, avg_frame_rate)
                 )
             start = time()
-    # write to files        
+    # write to files
     with open(os.path.join(args.result_dir, args.exp+'.txt'), 'a') as f:
         print(
             'epoch: {0}, test: {1}/{2}, SAD: {3:.2f}, MSE: {4:.4f}, Grad: {5:.2f}, Conn: {6:.2f}'
-            .format(epoch, i+1, len(val_loader), np.mean(sad), np.mean(mse), np.mean(grad), np.mean(conn)), 
+            .format(epoch, i+1, len(val_loader), np.mean(sad), np.mean(mse), np.mean(grad), np.mean(conn)),
             file=f
         )
     # save stats
@@ -301,17 +308,17 @@ def validate(net, val_loader, epoch, args):
 
 def main():
     args = get_arguments()
-    
+
     # seeding for reproducbility
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.random_seed)
     torch.manual_seed(args.random_seed)
     # fix random seed bugs in numpy
-    # np.random.seed(args.random_seed) 
+    # np.random.seed(args.random_seed)
 
     # instantiate dataset
     dataset = AdobeImageMattingDataset
-    
+
     snapshot_dir = os.path.join(args.snapshot_dir, args.dataset.lower(), args.exp)
     if not os.path.exists(snapshot_dir):
         os.makedirs(snapshot_dir)
@@ -330,9 +337,9 @@ def main():
     hlnet = hlbackbone[args.backbone]
     net = hlnet(
         pretrained=True,
-        freeze_bn=True, 
-        output_stride=args.output_stride, 
-        input_size=args.crop_size, 
+        freeze_bn=True,
+        output_stride=args.output_stride,
+        input_size=args.crop_size,
         apply_aspp=args.apply_aspp,
         conv_operator=args.conv_operator,
         decoder=args.decoder,
@@ -343,13 +350,13 @@ def main():
         use_context=args.use_context,
         sync_bn=args.sync_bn
     )
-    
+
     if args.backbone == 'mobilenetv2':
         net = nn.DataParallel(net)
     if args.sync_bn:
         patch_replication_callback(net)
     net.cuda()
-    
+
     # filter parameters
     pretrained_params = []
     learning_params = []
@@ -428,7 +435,7 @@ def main():
     train_loader = DataLoader(
         trainset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=False,
         num_workers=args.num_workers,
         worker_init_fn=worker_init_fn,
         pin_memory=True,
@@ -452,7 +459,7 @@ def main():
     if args.evaluate_only:
         validate(net, val_loader, start_epoch+1, args)
         return
-    
+
     resume_epoch = -1 if start_epoch == 0 else start_epoch
     scheduler = MultiStepLR(optimizer, milestones=[20, 26], gamma=0.1, last_epoch=resume_epoch)
     for epoch in range(start_epoch, args.num_epochs):
